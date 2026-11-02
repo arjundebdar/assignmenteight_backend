@@ -28,9 +28,7 @@ cloudinary.config({
 });
 
 // MongoDB Configuration
-const client = new MongoClient(
-  `mongodb://${process.env.DB_USER}:${process.env.DB_PASS}@ac-fnhayin-shard-00-00.1gmbeud.mongodb.net:27017,ac-fnhayin-shard-00-01.1gmbeud.mongodb.net:27017,ac-fnhayin-shard-00-02.1gmbeud.mongodb.net:27017/?ssl=true&replicaSet=atlas-ki9uz8-shard-0&authSource=admin`,
-);
+const client = new MongoClient(process.env.MONGODB_URI);
 
 let booksCollection;
 let borrowedBooksCollection;
@@ -439,3 +437,5 @@ const startServer = async () => {
 };
 
 startServer();
+
+export default app;
