@@ -8,13 +8,17 @@ import "dotenv/config";
 const app = express();
 const PORT = 5000;
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
-});
-
+// Middleware
 app.use(cors());
 app.use(express.json());
+
+// Multer Configuration
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+});
 
 // Cloudinary Configuration
 cloudinary.config({
@@ -23,108 +27,57 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// MongoDB Connection
+// MongoDB Configuration
 const client = new MongoClient(
   `mongodb://${process.env.DB_USER}:${process.env.DB_PASS}@ac-fnhayin-shard-00-00.1gmbeud.mongodb.net:27017,ac-fnhayin-shard-00-01.1gmbeud.mongodb.net:27017,ac-fnhayin-shard-00-02.1gmbeud.mongodb.net:27017/?ssl=true&replicaSet=atlas-ki9uz8-shard-0&authSource=admin`,
 );
 
 let booksCollection;
+let borrowedBooksCollection;
 
-export async function connectToMongoDB() {
+// Connect MongoDB
+const connectToMongoDB = async () => {
   try {
     await client.connect();
 
-    console.log("You successfully connected to MongoDB!");
-
     const db = client.db("libraryDB");
     booksCollection = db.collection("books");
+    borrowedBooksCollection = db.collection("borrowedBooks");
 
-    return client;
-  } catch (err) {
-    console.error("MongoDB Connection Error:", err);
-    throw err;
-  }
-}
-
-// GET API
-app.get("/booksList", async (req, res) => {
-  try {
-    const booklist = await booksCollection.find().toArray();
-    res.json(booklist);
+    console.log("You successfully connected to MongoDB!");
   } catch (error) {
-    res.status(500).send({ message: error.message });
+    console.error("MongoDB Connection Error:", error);
+    process.exit(1);
   }
-});
+};
 
-// POST API
-app.post("/booksList", upload.single("image"), async (req, res) => {
-  try {
-    // Check image
-    if (!req.file) {
-      return res.status(400).send({
-        message: "Please upload a book image!",
-      });
-    }
+// Cloudinary Image Upload Function
+const uploadImage = async (file) => {
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader
+      .upload_stream(
+        {
+          folder: "library-books",
+          resource_type: "image",
+        },
+        (error, result) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve(result.secure_url);
+          }
+        },
+      )
+      .end(file.buffer);
+  });
+};
 
-    // Upload image to Cloudinary
-    const result = await new Promise((resolve, reject) => {
-      cloudinary.uploader
-        .upload_stream(
-          {
-            folder: "library-books",
-            resource_type: "image",
-          },
-          (error, result) => {
-            if (error) {
-              reject(error);
-            } else {
-              resolve(result);
-            }
-          },
-        )
-        .end(req.file.buffer);
-    });
-
-    // Get image URL
-    const imageUrl = result.secure_url;
-
-    // Book Data
-    const bookData = {
-      ...req.body,
-      totalCopies: Number(req.body.totalCopies),
-      image: imageUrl,
-    };
-
-    // Save book to MongoDB
-    const insertResult = await booksCollection.insertOne(bookData);
-
-    res.status(201).send({
-      message: "Book added successfully!",
-      insertedId: insertResult.insertedId,
-      image: imageUrl,
-    });
-  } catch (error) {
-    console.error("Book Upload Error:", error);
-
-    res.status(500).send({
-      message: error.message || "Failed to add book",
-    });
-  }
-});
-
-// Connect MongoDB
-const getBooks = await connectToMongoDB();
-
-const db = getBooks.db("libraryDB");
-const books = db.collection("books");
-
-// GET All Books
+// GET ALL BOOKS
 app.get("/books", async (req, res) => {
   try {
-    const cursor = books.find({});
-    const allBooks = await cursor.toArray();
+    const books = await booksCollection.find().toArray();
 
-    res.send(allBooks);
+    res.send(books);
   } catch (error) {
     res.status(500).send({
       message: error.message,
@@ -132,9 +85,10 @@ app.get("/books", async (req, res) => {
   }
 });
 
+// GET SINGLE BOOK
 app.get("/books/:id", async (req, res) => {
   try {
-    const id = req.params.id;
+    const { id } = req.params;
 
     if (!ObjectId.isValid(id)) {
       return res.status(400).send({
@@ -142,7 +96,7 @@ app.get("/books/:id", async (req, res) => {
       });
     }
 
-    const book = await books.findOne({
+    const book = await booksCollection.findOne({
       _id: new ObjectId(id),
     });
 
@@ -160,7 +114,328 @@ app.get("/books/:id", async (req, res) => {
   }
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// ADD BOOK
+app.post("/books", upload.single("image"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).send({
+        message: "Please upload a book image!",
+      });
+    }
+
+    // Upload image to Cloudinary
+    const imageUrl = await uploadImage(req.file);
+
+    // Book Data
+    const bookData = {
+      ...req.body,
+      totalCopies: Number(req.body.totalCopies),
+      image: imageUrl,
+    };
+
+    // Save to MongoDB
+    const result = await booksCollection.insertOne(bookData);
+
+    res.status(201).send({
+      message: "Book added successfully!",
+      insertedId: result.insertedId,
+      image: imageUrl,
+    });
+  } catch (error) {
+    console.error("Book Upload Error:", error);
+
+    res.status(500).send({
+      message: error.message || "Failed to add book",
+    });
+  }
 });
+
+// UPDATE BOOK
+app.put("/books/:id", upload.single("image"), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        message: "Invalid book ID",
+      });
+    }
+
+    // Find existing book
+    const existingBook = await booksCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!existingBook) {
+      return res.status(404).send({
+        message: "Book not found",
+      });
+    }
+
+    // Keep previous image
+    let imageUrl = existingBook.image;
+
+    // Upload new image only if selected
+    if (req.file) {
+      imageUrl = await uploadImage(req.file);
+    }
+
+    // Updated Data
+    const updatedBook = {
+      title: req.body.title,
+      author: req.body.author,
+      category: req.body.category,
+      totalCopies: Number(req.body.totalCopies),
+      description: req.body.description,
+      image: imageUrl,
+    };
+
+    // Update MongoDB
+    await booksCollection.updateOne(
+      {
+        _id: new ObjectId(id),
+      },
+      {
+        $set: updatedBook,
+      },
+    );
+
+    res.send({
+      message: "Book updated successfully!",
+      image: imageUrl,
+    });
+  } catch (error) {
+    console.error("Book Update Error:", error);
+
+    res.status(500).send({
+      message: error.message || "Failed to update book",
+    });
+  }
+});
+
+// DELETE BOOK
+app.delete("/books/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        message: "Invalid book ID",
+      });
+    }
+
+    const result = await booksCollection.deleteOne({
+      _id: new ObjectId(id),
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).send({
+        message: "Book not found",
+      });
+    }
+
+    res.send({
+      message: "Book deleted successfully!",
+    });
+  } catch (error) {
+    res.status(500).send({
+      message: error.message,
+    });
+  }
+});
+
+// BORROW BOOK
+app.post("/borrow", async (req, res) => {
+  const { bookId, userName, userEmail } = req.body;
+
+  if (!ObjectId.isValid(bookId)) {
+    return res.status(400).send({
+      message: "Invalid book ID",
+    });
+  }
+
+  if (!userEmail) {
+    return res.status(400).send({
+      message: "User email is required",
+    });
+  }
+
+  const mongoSession = client.startSession();
+
+  try {
+    let borrowedBook;
+
+    await mongoSession.withTransaction(async () => {
+      // Decrease available quantity atomically
+      const bookUpdate = await booksCollection.updateOne(
+        {
+          _id: new ObjectId(bookId),
+          totalCopies: { $gt: 0 },
+        },
+        {
+          $inc: { totalCopies: -1 },
+        },
+        { session: mongoSession },
+      );
+
+      if (bookUpdate.modifiedCount === 0) {
+        throw new Error("BOOK_NOT_AVAILABLE");
+      }
+
+      const book = await booksCollection.findOne(
+        { _id: new ObjectId(bookId) },
+        { session: mongoSession },
+      );
+
+      const borrowDate = new Date();
+      const returnDate = new Date(borrowDate);
+      returnDate.setDate(returnDate.getDate() + 14);
+
+      borrowedBook = {
+        bookId: new ObjectId(bookId),
+        title: book.title,
+        image: book.image,
+        userName,
+        userEmail,
+        borrowDate,
+        returnDate,
+        status: "borrowed",
+      };
+
+      await borrowedBooksCollection.insertOne(borrowedBook, {
+        session: mongoSession,
+      });
+    });
+
+    res.status(201).send({
+      message: "Book borrowed successfully!",
+      borrowedBook,
+    });
+  } catch (error) {
+    console.error("Borrow Book Error:", error);
+
+    if (error.message === "BOOK_NOT_AVAILABLE") {
+      return res.status(409).send({
+        message: "Sorry! This book is currently unavailable.",
+      });
+    }
+
+    res.status(500).send({
+      message: error.message || "Failed to borrow book",
+    });
+  } finally {
+    await mongoSession.endSession();
+  }
+});
+
+// GET MY BORROWED BOOKS
+app.get("/my-borrows/:email", async (req, res) => {
+  try {
+    const { email } = req.params;
+
+    const borrowedBooks = await borrowedBooksCollection
+      .find({
+        userEmail: email,
+        status: "borrowed",
+      })
+      .sort({ borrowDate: -1 })
+      .toArray();
+
+    res.send(borrowedBooks);
+  } catch (error) {
+    res.status(500).send({
+      message: error.message,
+    });
+  }
+});
+
+// RETURN BORROWED BOOK
+app.patch("/borrow/:id/return", async (req, res) => {
+  const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({
+      message: "Invalid borrow ID",
+    });
+  }
+
+  const mongoSession = client.startSession();
+
+  try {
+    await mongoSession.withTransaction(async () => {
+      // Change status only if it is still borrowed
+      const borrowUpdate = await borrowedBooksCollection.updateOne(
+        {
+          _id: new ObjectId(id),
+          status: "borrowed",
+        },
+        {
+          $set: {
+            status: "returned",
+            returnedAt: new Date(),
+          },
+        },
+        { session: mongoSession },
+      );
+
+      if (borrowUpdate.modifiedCount === 0) {
+        throw new Error("ALREADY_RETURNED");
+      }
+
+      // Increase available quantity
+      const bookUpdate = await booksCollection.updateOne(
+        {
+          _id: (
+            await borrowedBooksCollection.findOne(
+              { _id: new ObjectId(id) },
+              { session: mongoSession },
+            )
+          ).bookId,
+        },
+        {
+          $inc: { totalCopies: 1 },
+        },
+        { session: mongoSession },
+      );
+
+      if (bookUpdate.matchedCount === 0) {
+        throw new Error("BOOK_NOT_FOUND");
+      }
+    });
+
+    res.send({
+      message: "Book returned successfully!",
+    });
+  } catch (error) {
+    console.error("Return Book Error:", error);
+
+    if (error.message === "ALREADY_RETURNED") {
+      return res.status(409).send({
+        message: "This book has already been returned.",
+      });
+    }
+
+    if (error.message === "BOOK_NOT_FOUND") {
+      return res.status(404).send({
+        message: "Book not found.",
+      });
+    }
+
+    res.status(500).send({
+      message: error.message || "Failed to return book",
+    });
+  } finally {
+    await mongoSession.endSession();
+  }
+});
+
+// Start Server After MongoDB Connection
+const startServer = async () => {
+  await connectToMongoDB();
+
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+};
+
+startServer();
