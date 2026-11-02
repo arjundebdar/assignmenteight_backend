@@ -460,9 +460,11 @@ app.patch("/borrow/:id/return", async (req, res) => {
 const startServer = async () => {
   await connectToMongoDB();
 
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  if (process.env.NODE_ENV !== "production") {
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  }
 };
 
 startServer();
