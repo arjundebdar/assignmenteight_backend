@@ -28,26 +28,55 @@ cloudinary.config({
 });
 
 // MongoDB Configuration
-const client = new MongoClient(process.env.MONGODB_URI);
+
+// MongoDB Configuration
+let client;
+let dbPromise;
 
 let booksCollection;
 let borrowedBooksCollection;
 
 // Connect MongoDB
 const connectToMongoDB = async () => {
+  if (!process.env.MONGODB_URI) {
+    throw new Error("MONGODB_URI is missing!");
+  }
+
+  if (!dbPromise) {
+    client = new MongoClient(process.env.MONGODB_URI);
+
+    dbPromise = client
+      .connect()
+      .then(() => {
+        const db = client.db("libraryDB");
+
+        booksCollection = db.collection("books");
+        borrowedBooksCollection = db.collection("borrowedBooks");
+
+        console.log("You successfully connected to MongoDB!");
+      })
+      .catch((error) => {
+        dbPromise = null;
+        throw error;
+      });
+  }
+
+  return dbPromise;
+};
+
+// Connect before handling API requests
+app.use(async (req, res, next) => {
   try {
-    await client.connect();
-
-    const db = client.db("libraryDB");
-    booksCollection = db.collection("books");
-    borrowedBooksCollection = db.collection("borrowedBooks");
-
-    console.log("You successfully connected to MongoDB!");
+    await connectToMongoDB();
+    next();
   } catch (error) {
     console.error("MongoDB Connection Error:", error);
-    process.exit(1);
+
+    res.status(500).send({
+      message: "Database connection failed",
+    });
   }
-};
+});
 
 // Cloudinary Image Upload Function
 const uploadImage = async (file) => {
