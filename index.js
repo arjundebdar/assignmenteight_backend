@@ -28,8 +28,6 @@ cloudinary.config({
 });
 
 // MongoDB Configuration
-
-// MongoDB Configuration
 let client;
 let dbPromise;
 
@@ -98,6 +96,9 @@ const uploadImage = async (file) => {
       .end(file.buffer);
   });
 };
+app.get("/", (req, res) => {
+  res.send("Server is running");
+});
 
 // GET ALL BOOKS
 app.get("/books", async (req, res) => {
