@@ -62,7 +62,7 @@ const connectToMongoDB = async () => {
   return dbPromise;
 };
 
-// Connect before handling API requests
+// Connect MongoDB Before API Requests
 app.use(async (req, res, next) => {
   try {
     await connectToMongoDB();
@@ -96,6 +96,8 @@ const uploadImage = async (file) => {
       .end(file.buffer);
   });
 };
+
+// HOME ROUTE
 app.get("/", (req, res) => {
   res.send("Server is running");
 });
@@ -104,7 +106,6 @@ app.get("/", (req, res) => {
 app.get("/books", async (req, res) => {
   try {
     const books = await booksCollection.find().toArray();
-
     res.send(books);
   } catch (error) {
     res.status(500).send({
@@ -151,17 +152,14 @@ app.post("/books", upload.single("image"), async (req, res) => {
       });
     }
 
-    // Upload image to Cloudinary
     const imageUrl = await uploadImage(req.file);
 
-    // Book Data
     const bookData = {
       ...req.body,
       totalCopies: Number(req.body.totalCopies),
       image: imageUrl,
     };
 
-    // Save to MongoDB
     const result = await booksCollection.insertOne(bookData);
 
     res.status(201).send({
@@ -189,7 +187,6 @@ app.put("/books/:id", upload.single("image"), async (req, res) => {
       });
     }
 
-    // Find existing book
     const existingBook = await booksCollection.findOne({
       _id: new ObjectId(id),
     });
@@ -200,15 +197,12 @@ app.put("/books/:id", upload.single("image"), async (req, res) => {
       });
     }
 
-    // Keep previous image
     let imageUrl = existingBook.image;
 
-    // Upload new image only if selected
     if (req.file) {
       imageUrl = await uploadImage(req.file);
     }
 
-    // Updated Data
     const updatedBook = {
       title: req.body.title,
       author: req.body.author,
@@ -218,7 +212,6 @@ app.put("/books/:id", upload.single("image"), async (req, res) => {
       image: imageUrl,
     };
 
-    // Update MongoDB
     await booksCollection.updateOne(
       {
         _id: new ObjectId(id),
@@ -294,7 +287,6 @@ app.post("/borrow", async (req, res) => {
     let borrowedBook;
 
     await mongoSession.withTransaction(async () => {
-      // Decrease available quantity atomically
       const bookUpdate = await booksCollection.updateOne(
         {
           _id: new ObjectId(bookId),
@@ -391,7 +383,6 @@ app.patch("/borrow/:id/return", async (req, res) => {
 
   try {
     await mongoSession.withTransaction(async () => {
-      // Change status only if it is still borrowed
       const borrowUpdate = await borrowedBooksCollection.updateOne(
         {
           _id: new ObjectId(id),
@@ -410,15 +401,14 @@ app.patch("/borrow/:id/return", async (req, res) => {
         throw new Error("ALREADY_RETURNED");
       }
 
-      // Increase available quantity
+      const borrowedRecord = await borrowedBooksCollection.findOne(
+        { _id: new ObjectId(id) },
+        { session: mongoSession },
+      );
+
       const bookUpdate = await booksCollection.updateOne(
         {
-          _id: (
-            await borrowedBooksCollection.findOne(
-              { _id: new ObjectId(id) },
-              { session: mongoSession },
-            )
-          ).bookId,
+          _id: borrowedRecord.bookId,
         },
         {
           $inc: { totalCopies: 1 },
@@ -457,17 +447,12 @@ app.patch("/borrow/:id/return", async (req, res) => {
   }
 });
 
-// Start Server After MongoDB Connection
-const startServer = async () => {
-  await connectToMongoDB();
+// LOCAL DEVELOPMENT SERVER
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
 
-  if (process.env.NODE_ENV !== "production") {
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  }
-};
-
-startServer();
-
+// VERCEL EXPORT
 export default app;
