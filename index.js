@@ -114,6 +114,26 @@ app.get("/books", async (req, res) => {
   }
 });
 
+// GET MY BOOKS
+app.get("/my-books/:email", async (req, res) => {
+  try {
+    const { email } = req.params;
+
+    const myBooks = await booksCollection
+      .find({
+        userEmail: email,
+      })
+      .sort({ _id: -1 })
+      .toArray();
+
+    res.send(myBooks);
+  } catch (error) {
+    res.status(500).send({
+      message: error.message,
+    });
+  }
+});
+
 // GET SINGLE BOOK
 app.get("/books/:id", async (req, res) => {
   try {
@@ -180,6 +200,7 @@ app.post("/books", upload.single("image"), async (req, res) => {
 app.put("/books/:id", upload.single("image"), async (req, res) => {
   try {
     const { id } = req.params;
+    const { userEmail } = req.query;
 
     if (!ObjectId.isValid(id)) {
       return res.status(400).send({
@@ -187,13 +208,21 @@ app.put("/books/:id", upload.single("image"), async (req, res) => {
       });
     }
 
+    if (!userEmail) {
+      return res.status(400).send({
+        message: "User email is required",
+      });
+    }
+
+    // Check Book Ownership
     const existingBook = await booksCollection.findOne({
       _id: new ObjectId(id),
+      userEmail: userEmail,
     });
 
     if (!existingBook) {
       return res.status(404).send({
-        message: "Book not found",
+        message: "Book not found or you are not authorized",
       });
     }
 
@@ -215,6 +244,7 @@ app.put("/books/:id", upload.single("image"), async (req, res) => {
     await booksCollection.updateOne(
       {
         _id: new ObjectId(id),
+        userEmail: userEmail,
       },
       {
         $set: updatedBook,
@@ -238,6 +268,7 @@ app.put("/books/:id", upload.single("image"), async (req, res) => {
 app.delete("/books/:id", async (req, res) => {
   try {
     const { id } = req.params;
+    const { userEmail } = req.query;
 
     if (!ObjectId.isValid(id)) {
       return res.status(400).send({
@@ -245,13 +276,20 @@ app.delete("/books/:id", async (req, res) => {
       });
     }
 
+    if (!userEmail) {
+      return res.status(400).send({
+        message: "User email is required",
+      });
+    }
+
     const result = await booksCollection.deleteOne({
       _id: new ObjectId(id),
+      userEmail: userEmail,
     });
 
     if (result.deletedCount === 0) {
       return res.status(404).send({
-        message: "Book not found",
+        message: "Book not found or you are not authorized",
       });
     }
 
